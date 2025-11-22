@@ -1,17 +1,18 @@
 package org.deepak.graphql.schema;
 
 import com.google.inject.Inject;
+import graphql.schema.DataFetcher;
 import graphql.schema.GraphQLSchema;
-import graphql.schema.idl.RuntimeWiring;
-import graphql.schema.idl.SchemaGenerator;
-import graphql.schema.idl.SchemaParser;
-import graphql.schema.idl.TypeDefinitionRegistry;
+import graphql.schema.idl.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.deepak.graphql.resolver.GetUserNameDataFetcher;
-import org.deepak.graphql.resolver.HelloDataFetcher;
+import org.deepak.graphql.resolver.field.UserNameDataFetcher;
+import org.deepak.graphql.resolver.query.UserQueryDataFetcher;
+import org.deepak.graphql.resolver.field.HelloDataFetcher;
 
 import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 @Slf4j
@@ -19,7 +20,8 @@ import java.util.Objects;
 public class SchemaProvider {
 
     private final HelloDataFetcher helloDataFetcher;
-    private final GetUserNameDataFetcher getUserNameDataFetcher;
+    private final UserQueryDataFetcher userQueryDataFetcher;
+    private final UserNameDataFetcher userNameDataFetcher;
 
     public GraphQLSchema buildSchema() {
         TypeDefinitionRegistry typeRegistry = parseSchema();
@@ -37,14 +39,30 @@ public class SchemaProvider {
         return registry;
     }
     private RuntimeWiring buildRuntimeWiring() {
-        RuntimeWiring wiring = RuntimeWiring.newRuntimeWiring()
-                .type("Query", builder -> {
-                    return builder
-                            .dataFetcher("hello", helloDataFetcher)
-                            .dataFetcher("getUser", getUserNameDataFetcher);
-                })
-                .build();
+
+        List<TypeRuntimeWiring> runtimeWiringList = new ArrayList<>();
+
+        // Add Query type data fetchers
+        addDataFetcher(runtimeWiringList, "Query", "hello", helloDataFetcher);
+        addDataFetcher(runtimeWiringList, "Query", "getUser", userQueryDataFetcher);
+
+        // Add User type data fetchers
+        addDataFetcher(runtimeWiringList, "User", "name", userNameDataFetcher);
+
+        RuntimeWiring.Builder wiringBuilder = RuntimeWiring.newRuntimeWiring();
+        createRunTimeWiringBuilder(runtimeWiringList, wiringBuilder);
         log.debug("Runtime wiring completed");
-        return wiring;
+        return wiringBuilder.build();
+    }
+    private void addDataFetcher(List<TypeRuntimeWiring> runtimeWiringList, String typeName, String fieldName,
+                                DataFetcher<?> dataFetcher) {
+        runtimeWiringList.add(TypeRuntimeWiring.newTypeWiring(typeName)
+                .dataFetcher(fieldName, dataFetcher)
+                .build());
+    }
+    public static RuntimeWiring.Builder createRunTimeWiringBuilder(List<TypeRuntimeWiring> typeRuntimeWirings,
+                                                                   final RuntimeWiring.Builder runtimeWiringBuilder) {
+        typeRuntimeWirings.forEach(runtimeWiringBuilder::type);
+        return runtimeWiringBuilder;
     }
 }

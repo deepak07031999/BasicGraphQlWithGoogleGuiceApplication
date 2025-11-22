@@ -1,4 +1,4 @@
-package org.deepak.graphql.resolver;
+package org.deepak.graphql.resolver.field;
 
 import graphql.schema.DataFetcher;
 import graphql.schema.DataFetchingEnvironment;

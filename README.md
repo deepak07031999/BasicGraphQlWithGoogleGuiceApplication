@@ -36,14 +36,20 @@ classDiagram
         +get(DataFetchingEnvironment) String
     }
     
-    class GetUserNameDataFetcher {
+    class UserQueryDataFetcher {
         +get(DataFetchingEnvironment) User
+    }
+    
+    class UserNameDataFetcher {
+        +get(DataFetchingEnvironment) String
     }
     
     class SchemaProvider {
         -HelloDataFetcher helloDataFetcher
-        -GetUserNameDataFetcher getUserNameDataFetcher
+        -UserQueryDataFetcher userQueryDataFetcher
+        -UserNameDataFetcher userNameDataFetcher
         +buildSchema() GraphQLSchema
+        +addDataFetcher() void
     }
     
     class GqlRegistrar {
@@ -75,17 +81,20 @@ classDiagram
     GraphQLApplication --> GraphQLRequestHandler : gets instance
     
     GraphQLModule --> HelloDataFetcher : provides
-    GraphQLModule --> GetUserNameDataFetcher : provides
+    GraphQLModule --> UserQueryDataFetcher : provides
+    GraphQLModule --> UserNameDataFetcher : provides
     GraphQLModule --> SchemaProvider : provides
     GraphQLModule --> GqlRegistrar : provides
     GraphQLModule --> GraphQLRequestHandler : provides
     GraphQLModule --> GraphQL : provides
     
     SchemaProvider --> HelloDataFetcher : depends on
-    SchemaProvider --> GetUserNameDataFetcher : depends on
+    SchemaProvider --> UserQueryDataFetcher : depends on
+    SchemaProvider --> UserNameDataFetcher : depends on
     GqlRegistrar --> SchemaProvider : depends on
     GraphQLRequestHandler --> GraphQL : depends on
-    GetUserNameDataFetcher --> User : returns
+    UserQueryDataFetcher --> User : returns
+    UserNameDataFetcher --> User : receives as source
     
     GqlRegistrar --> GraphQL : creates
     GraphQLModule --> GqlRegistrar : uses for provider
@@ -116,29 +125,37 @@ classDiagram
   - Returns greeting message for GraphQL "hello" field
   - Implements `DataFetcher<String>` interface
 
-### 4. **GetUserNameDataFetcher** (User Query Resolver)
+### 4. **UserQueryDataFetcher** (User Query Resolver)
 - **Purpose**: Implements GraphQL field resolver for "getUser" query
 - **Responsibilities**:
   - Fetches user data by ID
-  - Returns User object with id and name
+  - Returns User object with id, name, and age
   - Implements `DataFetcher<User>` interface
 
-### 5. **SchemaProvider** (Schema Builder)
+### 5. **UserNameDataFetcher** (Field-Level Resolver)
+- **Purpose**: Implements GraphQL field resolver for "User.name" field
+- **Responsibilities**:
+  - Receives User object as source from UserQueryDataFetcher
+  - Processes and returns formatted name string
+  - Implements `DataFetcher<String>` interface
+
+### 6. **SchemaProvider** (Schema Builder)
 - **Purpose**: Creates executable GraphQL schema
-- **Dependencies**: `HelloDataFetcher`, `GetUserNameDataFetcher` (injected)
+- **Dependencies**: `HelloDataFetcher`, `UserQueryDataFetcher`, `UserNameDataFetcher` (injected)
 - **Responsibilities**:
   - Parses GraphQL schema from `/schema.graphqls`
-  - Wires schema types to data fetchers
-  - Builds runtime wiring for Query type
+  - Wires schema types to data fetchers using `addDataFetcher` helper
+  - Builds runtime wiring for Query and User types
+  - Uses `TypeRuntimeWiring` list pattern for modular data fetcher registration
 
-### 6. **GqlRegistrar** (GraphQL Engine Factory)
+### 7. **GqlRegistrar** (GraphQL Engine Factory)
 - **Purpose**: Creates and configures GraphQL execution engine
 - **Dependencies**: `SchemaProvider` (injected)
 - **Responsibilities**:
   - Builds GraphQL engine with executable schema
   - Provides GraphQL instance to other components
 
-### 7. **GraphQLRequestHandler** (HTTP Request Handler)
+### 8. **GraphQLRequestHandler** (HTTP Request Handler)
 - **Purpose**: Handles HTTP requests for GraphQL endpoint
 - **Dependencies**: `GraphQL` (injected)
 - **Responsibilities**:
@@ -147,25 +164,33 @@ classDiagram
   - Executes GraphQL query with proper error handling
   - Returns JSON response with data or errors
 
-### 8. **User** (Generated Type)
+### 9. **User** (Generated Type)
 - **Purpose**: Represents User entity in GraphQL schema
 - **Properties**:
   - `id: Int!` - Non-null user identifier
-  - `name: String!` - Non-null user name
+  - `name: String!` - Non-null user name (resolved by UserNameDataFetcher)
+  - `age: Int!` - Non-null user age
 
 ## Dependency Flow
 
 ```
 HelloDataFetcher ──┐
-                   ├─→ SchemaProvider → GqlRegistrar → GraphQL → GraphQLRequestHandler
-GetUserNameDataFetcher ──┘
+UserQueryDataFetcher ──┼─→ SchemaProvider → GqlRegistrar → GraphQL → GraphQLRequestHandler
+UserNameDataFetcher ──┘
 ```
 
-1. **HelloDataFetcher & GetUserNameDataFetcher**: Created by Guice as singletons
-2. **SchemaProvider**: Injected with both data fetchers, builds executable schema
+**Field Resolution Flow:**
+```
+UserQueryDataFetcher → User Object → UserNameDataFetcher
+                    (source)      (field resolver)
+```
+
+1. **HelloDataFetcher, UserQueryDataFetcher & UserNameDataFetcher**: Created by Guice as singletons
+2. **SchemaProvider**: Injected with all data fetchers, builds executable schema with field-level resolvers
 3. **GqlRegistrar**: Injected with SchemaProvider, creates GraphQL engine
 4. **GraphQL**: Provided by GqlRegistrar via provider method
 5. **GraphQLRequestHandler**: Injected with GraphQL, handles HTTP requests
+6. **Field Resolution**: UserQueryDataFetcher returns User object, which becomes source for UserNameDataFetcher
 
 ## File Structure
 
@@ -179,8 +204,11 @@ src/main/
 │   │   └── GraphQLRequestHandler.java   # HTTP request handler
 │   └── graphql/
 │       ├── resolver/
-│       │   ├── HelloDataFetcher.java    # Hello query resolver
-│       │   └── GetUserNameDataFetcher.java # User query resolver
+│       │   ├── field/
+│       │   │   ├── HelloDataFetcher.java    # Hello query resolver
+│       │   │   └── UserNameDataFetcher.java # User name field resolver
+│       │   └── query/
+│       │       └── UserQueryDataFetcher.java # User query resolver
 │       └── schema/
 │           └── SchemaProvider.java      # Schema builder
 └── resources/
@@ -198,6 +226,7 @@ type Query {
 type User {
     id: Int!
     name: String!
+    age: Int!
 }
 ```
 
@@ -239,7 +268,8 @@ type User {
   "data": {
     "getUser": {
       "id": 123,
-      "name": "User 123"
+      "name": "name 123 (age: 10)",
+      "age": 10
     }
   }
 }
@@ -249,7 +279,7 @@ type User {
 **Request Body**:
 ```json
 {
-  "query": "{ getUser(id: 123) { id name } }"
+  "query": "{ getUser(id: 123) { id name age } }"
 }
 ```
 
